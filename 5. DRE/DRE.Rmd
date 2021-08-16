@@ -1,0 +1,304 @@
+---
+title: "Double Robust Estimation"
+always_allow_html: yes
+author: Ashley I. Naimi, PhD 
+header-includes:
+   - \DeclareMathOperator{\logit}{logit}
+   - \DeclareMathOperator{\expit}{expit}
+   - \usepackage{setspace}
+   - \usepackage{booktabs}
+output: #pdf_document2
+  bookdown::tufte_book2
+toc: false
+bibliography: ../ref_main_v4.bib
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+packages <- c( "data.table","tidyverse","ggplot2","ggExtra","gridExtra","skimr","here","Hmisc","RColorBrewer")
+
+for (package in packages) {
+  if (!require(package, character.only=T, quietly=T)) {
+    install.packages(package, repos='http://lib.stat.cmu.edu/R/CRAN')
+  }
+}
+
+for (package in packages) {
+  library(package, character.only=T)
+}
+
+thm <- theme_classic() +
+  theme(
+    legend.position = "top",
+    legend.background = element_rect(fill = "transparent", colour = NA),
+    legend.key = element_rect(fill = "transparent", colour = NA)
+  )
+theme_set(thm)
+```
+
+
+\newpage
+\noindent {\Large \bf Outline}
+\vskip .25cm
+\begin{itemize}
+  \item Double Robust Estimation and Machine Learning
+  \item Observed Data and Target Parameter
+  \item Parametric Estimation
+  \begin{itemize}
+       \item Estimation via Parametric Models
+       \item Estimation via Parametric Exposure Models
+       \item Parametric Doubly Robust Estimation
+  \end{itemize}
+  \item Nonparametric Singly Robust Estimation: The Curse of Dimensionality
+  \item Nonparametric Doubly Robust Estimation
+  \item Simulation Study
+  \item The AIPW Package
+\end{itemize}
+
+\newpage
+\onehalfspacing
+
+Both machine learning methods and doubly robust estimators are becoming increasingly popular, yet the critical relation between them remains poorly understood. Machine learning methods consist of a wide range of analytic techniques that do not require hard to verify modeling assumptions. Because of this, they are often assumed to be less biased than their standard parametric counterparts. This perceived property has motivated many to either recommended or use machine learning methods to estimate statistical parameters that correspond to causal quantities of interest [@Lee2010;@Westreich2010c;@Snowden2011;@Oulhote2019] However, it is generally not recognized that machine learning methods are subject to problems that arise from the curse of dimensionality, a term first coined by @Bellman1957 to refer to a set of problems encountered when estimating models with many variables [@Wasserman2006].
+
+Doubly robust estimators are so named because these methods allow two chances for adjustment [@Robins1995b;@Robins2001a;@Bang2005] In the case of confounding adjustment, these chances arise because the analyst must fit two models: a model for the outcome conditional on the exposure and all confounders (outcome model); and a model for the exposure conditional all confounders (the propensity score model). These are then combined to estimate the effect of interest [@Rotnitzky2014].
+
+The benefits of doubly robust methods have been explained by pointing out that if a confounding variable is left out of either the exposure or the outcome model (but not both), unbiased estimates can still be obtained [@Jonsson-Funk2011]. While true, analysts would not typically leave confounding variables out of either the exposure or outcome model. Such justifications ignore a critically important benefit conferred by doubly robust estimators: under relatively mild conditions, they remain unbiased, with asymptotically nominal confidence interval coverage, even when machine learning methods are used to fit the exposure and outcome models [@vanderLaan2006;@Kennedy2017]. In effect, doubly robust methods can mitigate or resolve problems caused by the curse of dimensionality.
+
+This little recognized relation between machine learning and doubly robust estimators has important implications for applied researchers, particularly those interested in using machine learning methods to estimate causal effects. Here, we examine these implications using simple Monte Carlo simulations [@Metropolis1949]. Our intent is to clarify that machine learning methods should be used with doubly robust methods; they should not generally be used to estimate causal effects with singly robust techniques, such as model-based standardization (i.e., the parametric g formula, or g computation), or inverse probability weighting.
+
+\section*{Observed Data \& Target Parameter}
+
+We consider a simple setting with a single binary exposure ($X$), a set of continuous confounders ($\mathbf{C} = \{C_1,C_2, C_3, C_4\}$) measured at baseline, and a single continuous outcome ($Y$) measured at the end of follow-up. In an observational cohort study to estimate the effect of $X$ on $Y$, $\mathbf{C}$ might be assumed a minimally sufficient adjustment set [@Greenland1999a], and the outcome and exposure would be assumed generated according to some unknown models, for example:
+\begin{align}
+		& E(Y \mid X, \mathbf{C}) = g(X,\mathbf{C}), \label{outcome} \tag{Model 1} \\
+		& P(X = 1 \mid \mathbf{C}) = f(\mathbf{C}).\label{propensity} \tag{Model 2}
+\end{align}
+In the above equations, we use $g(\bullet)$ and $f(\bullet)$ to emphasize that the expected outcome conditional on $X$ and $C$, and the probability of the exposure given $C$ need not be considered standard linear or logistic regression functions. Rather, $g(\bullet)$ and $f(\bullet)$ represent arbitrary functions relating the exposure and confounders to the outcome, and the confounders to the exposure. Importantly, in an observational cohort study assuming a correct confounder adjustment set, these arbitrary functions usually represent the extent of what is known about the exposure and outcome models [@Robins2001]. That is, while these models may typically be assumed to be in the family of generalized linear models [@Nelder1972], we note below why this may not often be ideal.
+
+We focus here on the average treatment effect:
+\begin{equation*}
+	\psi = E(Y^{x=1} - Y^{x=0}) 
+\end{equation*}
+where $Y^x$ is the outcome that would be observed if $X$ were set to $x$. This estimand is (point) identified under positivity, consistency, and exchangeability [@Robins2009;@Naimi2016b] If these assumptions hold, $\psi$ can be estimated using a number of approaches. In the equations that follow, we let $i$ index sample observations which range from 1 to $N$, $\hat{g}_i(X=x,\mathbf{C})$ and $\hat{f}_i(\mathbf{C})$ are individual sample predictions for $E(Y \mid X=x,\mathbf{C})$ and $P(X = 1 \mid \mathbf{C})$, respectively.
+
+With predictions from \ref{outcome}, $\psi$ can be estimated via model-based standardization (henceforth g computation) [@Naimi2016b]:
+\begin{equation}
+	\hat{\psi}_{gComp} = \frac{1}{N}\sum_{i=1}^N \big \{ \hat{g}_i(X=1,\mathbf{C}) - \hat{g}_i(X=0,\mathbf{C}) \big \}. \label{gComp}
+\end{equation}
+
+With predictions from \ref{propensity}, $\psi$ can be estimated via inverse probability weighting [@Hernan2006] as:
+\begin{equation}
+	\hat{\psi}_{ipw} = \frac{1}{N} \sum_{i = 1}^N \left \{ \left [ \frac{X_iY_i}{\hat{f}_i(\mathbf{C})} \right ] -  \left [ \frac{(1-X_i)Y_i}{1-\hat{f}_i(\mathbf{C})} \right ]\right \}. \label{ipw}
+\end{equation} 
+
+Both approaches \ref{gComp} and \ref{ipw} are ``singly robust'' in that they typically rely entirely on the correct specification of the appropriate single regression model. If these models are misspecified, the estimators will not generally converge to the true value. 
+
+Alternatively, one may employ a ``doubly robust'' technique where predictions from both the exposure and outcome models are combined into a single estimator to quantify the effect of interest. For example, using predictions from both Models \ref{propensity} and \ref{outcome}, $\psi$ can be estimated as:
+\begin{equation}
+\hat{\psi}_{aipw} = \frac{1}{N}\sum_{i=1}^N \left \{ \frac{(2X_i-1)[Y_i - \hat{g}_i(X,\mathbf{C})]}{(2X_i-1)\hat{f}_i(\mathbf{C}) + (1-X_i)} + \hat{g}_i(X=1,\mathbf{C}) - \hat{g}_i(X=0,\mathbf{C}) \right \}. \label{aipw}
+\end{equation}
+Equation \ref{aipw} is an augmented inverse probability weighted estimator, and will converge to the true value as the sample size grows if either $f(\mathbf{C})$ or $g(X,\mathbf{C})$, but not necessarily both, are consistently estimated. The estimator \ref{aipw} can be viewed as either a bias-corrected version of the g computation estimator (where the correction is the term incorporating the propensity score defined in \ref{propensity}), or an efficiency enhanced version of the IPW estimator (where the enhancement is the term incorporating the outcome model defined in \ref{outcome}) [@Daniel2018].
+
+There is a recently developed R package that can be used to implement AIPW [@Zhong2021]. Among other things, this package enables the use of the Super Learner to estimate the exposure and outcome models, and implements the sample splitting procedure described below, which is required for optimal performance of any DR estimator using machine learning. Details on the package and it's implementation are available in the citation above, as well as here: \href{https://yqzhong7.github.io/AIPW/}{https://yqzhong7.github.io/AIPW/}.
+
+Here is an example set of code one can use to implement the AIPW esitmator in the package:
+
+```{r, eval=F}
+library(AIPW)
+library(SuperLearner)
+set.seed(1234)
+#load simulated dataset (RCT)
+data(eager_sim_rct)
+#Specify SuperLearner libraries
+sl.lib = c("SL.gam","SL.earth","SL.ranger","SL.xgboost")
+#Create a vector of covariates
+Cov = c("loss_num","age", "time_try_pregnant","BMI","meanAP")
+#create a new AIPW object called AIPW_SL
+AIPW_SL <- AIPW$new(Y = eager_sim_rct$sim_Y,
+                    A = eager_sim_rct$sim_Tx, 
+                    W.g = eager_sim_rct$eligibility,
+                    W.Q = subset(eager_sim_rct,select=Cov), #covariates
+                    Q.SL.library = sl.lib, #outcome model
+                    g.SL.library = sl.lib, #exposure model
+                    k_split = 10, #num of folds for cross-fitting
+                    verbose=TRUE)
+#fit the data stored in the AIPW_SL object
+AIPW_SL$fit() 
+#summarise the results using truncated propensity scores
+AIPW_SL$summary(g.bound = 0.025) 
+```
+
+
+Alternatively, \ref{propensity} can be used to "update" \ref{outcome} via targeted minimum loss-based estimation: [@Rose2011, (p72-3)]
+
+\begin{equation}
+	\hat{\psi}_{tmle} = \frac{1}{N}\sum_{i=1}^N \big \{ \hat{g}^{u}_i(X=1,\mathbf{C}) - \hat{g}^{u}_i(X=0,\mathbf{C}) \big \}, \label{tmle}
+\end{equation}
+
+where $\hat{g}^{u}_i(X=x,\mathbf{C})$ are predictions from an ``updated'' outcome model. For the average treatment effect, this outcome model is updated by first generating a modified inverse probability weight, defined as:
+ \[
+    H(X,\mathbf{C})=\left\{
+                \begin{array}{ll}
+                  \frac{1}{\hat{f}_i(\mathbf{C})} & \text{if }X=1 \\
+                  - \frac{1}{1-\hat{f}_i(\mathbf{C})} & \text{otherwise}
+                \end{array}
+              \right.
+  \]
+and then including this inverse probability weight in a no-intercept logistic regression model for the outcome that includes the previous outcome predictions $\hat{g}_i(X,\mathbf{C})$ as an offset. The $\hat{g}^{u}_i(X=x,\mathbf{C})$ predictions are then generated from this model by setting $X$ to 1 and then to 0 for all individuals in the sample. TMLE is asymptotically equivalent to equation \ref{aipw} but can have better finite-sample performance [@Gruber2012].
+
+\section*{Parametric Estimation}
+
+For continuous $Y$ and binary $X$, it is customary to specify models \ref{outcome} and \ref{propensity} parametrically using linear and logistic regression, respectively. Doing so effectively states that we know enough about the form of $g(X,\mathbf{C})$ and $f(\mathbf{C})$ to define them as:
+\begin{align}
+		& g(X,\mathbf{C}) = E(Y \mid X, \mathbf{C}) = \beta_0 + \beta_1 X + \beta_2 C_1 + \beta_3 C_2 + \beta_4 C_3 + \beta_5 C_4, \label{parm_outcome}\\& \hskip 4.5cm Y \mid X, \mathbf{C} \sim \mathcal{N}\Big(E(Y \mid X, \mathbf{C}),\sigma^2 \Big) \notag \\
+		& f(\mathbf{C}) = P(X = 1 \mid \mathbf{C}) = \expit(\alpha_0 + \alpha_1C_1 + \alpha_2C_2 + \alpha_3C_3 + \alpha_4C_4), \label{parm_propensity}\\ & \hskip 4.5cm  \expit(\bullet) = 1/(1+\exp[-\bullet])  \notag
+\end{align}
+Imposing these forms on $g(X,\mathbf{C})$ and $f(\mathbf{C})$ permits use of maximum likelihood for estimation and inference [@Cole2013a].
+
+\subsection*{\textit{Estimation via Parametric Models}}
+
+Equation \ref{parm_outcome} imposes several parametric constraints on the form of $g(X, \mathbf{C})$: (i) $Y$ follows a conditional normal distribution with constant variance not depending on $X$ or $\mathbf{C}$; and (ii) the conditional mean of $Y$ is related to the covariates $X$ and $\mathbf{C}$ additively, as defined in equation \ref{parm_outcome}. If these constraints on $g(X,\mathbf{C})$ are true, and other identification and regularity conditions hold [@Longford2008 ch2], the maximum likelihood estimates of $\boldsymbol{\beta}$ are asymptotically efficient [@Rencher2000 (p144)]. Relatedly, under the model constraints and identification and regularity conditions, as the sample size increases, the estimates of $g(X,\mathbf{C})$ and/or $f(\mathbf{C})$ will converge to the true values at an optimal (i.e., $\sqrt{N}$) rate, and their distribution will be such that confidence intervals can be easily derived.
+
+If constraint (i) is violated, the maximum likelihood estimator is no longer the most efficient, but can still be used to estimate $\psi$ consistently. If constraint (ii) is violated, then the maximum likelihood estimator is no longer consistent. Depending on the severity to which constraint (ii) is violated, the bias may be substantial. Unfortunately, in an observational study the true form of equation \ref{parm_outcome} is almost never known. This means that such maximum likelihood estimates are almost always biased, with the degree of bias depending on the (unknown) extent to which the model is mis-specified [@Box1976].
+
+\subsection*{\textit{Estimation via Parametric Exposure Model}}
+
+One way to avoid relying on correct outcome model specification is to use a parametric approach for  \ref{propensity}, and estimate $\psi$ via $\hat{\psi}_{ipw}$. Specifically, with IP-weighting, one need not model the interactions between the exposure and any covariates [@Hernan2001]. Such an estimator is not as efficient as $\hat{\psi}_{gComp}$, and can be subject to important finite-sample biases when weights are very large, or when there are no observations to weight in certain exposure-confounder strata. But as the sample size increases, the inverse probability weighted estimator converges at the same standard $\sqrt{N}$ rate as the g computation estimator [@Westreich2012a]. Unfortunately, as with the outcome model, the true form of \ref{propensity} will almost never be known in an observational study. Mis-specification of equation \ref{parm_propensity} will also lead to biased estimation of $\psi$, again with the degree of bias depending on the unknown extent of model mis-specification.
+
+\subsection*{\textit{Parametric Doubly Robust Estimation}}
+
+To mitigate against mis-specification of the exposure or outcome models, numerous authors have advocated for the use of estimators such as equations \ref{aipw} or \ref{tmle}. These doubly robust estimators remain consistent even if either the exposure model or the outcome model is mis-specified, but not both. However, if it is unlikely that either equations \ref{parm_outcome} or  \ref{parm_propensity} is correct, then the doubly robust estimator will also likely be biased, and not much better than the singly robust estimators [@Kang2007; @Kennedy2017].
+
+\section*{Nonparametric Singly Robust Estimation: The Curse of Dimensionality}
+
+Nonparametric methods are an alternative to parametric models. For example, nonparametric maximum likelihood estimation (NPMLE) for \ref{propensity} or \ref{outcome} would entail fitting equations \ref{parm_outcome} or \ref{parm_propensity}, but with a parameter for each unique combination of values defined by the cross-classification of all covariates (i.e., saturating the model). However, the NPMLE will be undefined in any finite sample with a continuous confounder, since there will be no covariate patterns containing both treated and untreated subjects. 
+
+Alternatively, one can use nonparametric ``machine learning'' methods like kernel regression, splines, random forests, boosting, etc., which exploit smoothness across covariate patterns to estimate the regression function. However, for any nonparametric approach there is an explicit bias-variance trade-off that arises in the choice of tuning parameters; less smoothing yields smaller bias but larger variance, while more smoothing yields smaller variance but larger bias (parametric models can be viewed as an extreme form of smoothing). This tradeoff has important consequences. In particular, it is generally impossible to estimate regression functions nonparametrically at the standard $\sqrt{N}$ rates attained by correctly specified parametric estimators [@vanderVaart2000]. These slow rates generally require sample sizes that are exponentially larger than those required for (fast converging) parametric methods to maintain the same degree of accuracy.
+
+Convergence rates for nonparametric estimators become slower with more flexibility and more covariates. For example, a standard rate for estimating smooth regression functions is $N^{-\beta/(2\beta+d)}$, where $\beta$ represents the number of derivatives of the true regression function, and $d$ represents the dimension of, or number of covariates in, the true regression function. This issue is known as the curse of dimensionality [@Gyorfi2002;@Robins1997c;@Wasserman2006]. Sometimes this is viewed as a disadvantage of nonparametric methods; however, it is just the cost of making weaker assumptions: if a parametric model is misspecified, it will converge very quickly to the wrong answer. 
+
+In addition to slower convergence rates, confidence intervals are harder to obtain. Specifically, even in the rare case where one can derive asymptotic distributions for nonparametric estimators, it is typically not possible to construct confidence intervals (even via the bootstrap, as it requires certain convergence rate conditions to hold) without impractically undersmoothing the regression function (i.e., overfitting the data) [@Hahn1998].
+
+These complications (slow rates and lack of valid confidence intervals) are generally inherited by the singly robust estimators \ref{ipw} and \ref{gComp} (apart from a few special cases which require simple estimators, such as kernel methods with strong smoothness assumptions and careful tuning parameter choices that are suboptimal for estimating $f$ or $g$).  For general nonparametric estimators $\hat{f}$ and $\hat{g}$, the estimators \ref{ipw} and \ref{gComp} will converge at slow rates, and honest confidence intervals (defined as confidence intervals that are at least nominal over a large nonparametric class of regression functions) [@Li1989] will not be computable.
+
+\section*{Nonparametric Doubly Robust Estimation}
+
+Fortunately, doubly robust estimators that rely on nonparametric estimates of $f$ and $g$ do not suffer from the same limitations as the nonparametric versions of the singly robust estimators. In particular the doubly robust estimators \ref{aipw} and \ref{tmle} can be $\sqrt{N}$-consistent, asymptotically normal, and optimally efficient even if the estimators $\hat{f}$ and $\hat{g}$ are converging at slower nonparametric rates. In other words, the doubly robust estimator is less susceptible to the curse of dimensionality. This is because the singly robust estimators are combined in a way that their combined convergence rates are as fast or faster than the convergence rate of each estimator separately. In particular, if $\hat{f}$ and $\hat{g}$ are converging to their targets at least faster than $n^{-1/4}$ rates (technically, in $L_2$ norm), the doubly robust estimator will behave (asymptotically) just as if both $f$ and $g$ were estimated with correct parametric models. Importantly, $n^{-1/4}$ rates can be attained nonparametrically under relatively weak (smoothness, sparsity, or other structural) assumptions [@Gyorfi2002; Wasserman2006]. This improved performance of nonparametric methods when used with doubly robust techniques has important implications for applied researchers.
+
+\section*{Simulation Study}
+
+\subsection*{\textit{Data Generating Mechanism: Correct Specification}}
+
+To explore these implications, we carried out a simulation study of singly and doubly robust estimators with parametric and nonparametric methods. We simulated 100 Monte Carlo samples, with sample sizes of \{200, 1200, 5000\} using data generating mechanisms that would lead to both simple and challenging conditions for estimation and inference. Specifically, we generated four independent standard normal confounders, denoted $C$. Both the exposure and outcome models included each of these confounders. The exposure was generated from a logistic model with: 
+\begin{equation}
+	P ( X = 1 \mid C) = \expit \left \{-1+\log(1.75)C_1+\log(1.75)C_2+\log(1.75)C_3+\log(1.75)C_4\right \},
+\end{equation}
+A continuous outcome was generated as:
+\begin{equation}
+\begin{split}
+	Y = 120 + 6 X + 3 C_1 + 3 C_2 + 3 C_3 + 3 C_4 + \epsilon,
+	\label{outcome_sim}
+\end{split}	
+\end{equation}
+where the \underline{true average treatment effect $\psi = 6$}, with $\epsilon$ drawn from a normal distribution with mean $\mu=0$ and standard deviation $\sigma=6$. 
+
+\subsection*{\textit{Data Generating Mechanism: Model Misspecification}}
+
+To induce model misspecification, we followed previous research [@Kang2007] and transformed each of the continuous confounders as follows:
+\begin{align*}
+  Z_1 = \exp(C_1/2)\\
+  Z_2 = C_2/(1+\exp(C_1))+10\\
+  Z_3 = (C_1C_3/25+0.6)^3\\
+  Z_4 = (C_2+C_4+20)^2
+\end{align*}
+Thus, while the true models generating the exposure and outcome variables included only the untransformed variables $C$, analyses conducted under parametric model misspecification included only the transformed variables $Z$.
+
+\subsection*{\textit{Simulation Analysis}}
+
+In each Monte Carlo sample, we estimated the average treatment effect $\psi = E(Y^1 - Y^0) = 6$ using g computation, inverse probability weighting, augmented inverse probability weighting, and targeted minimum loss-based estimation under two settings: ($i$) only the simple confounder data $C$ were available and adjusted for in all estimators (parametric and nonparametric), and ($ii$) only the transformed confounder data $Z$ were available adjusted for in all estimators (parametric and nonparametric).
+
+Parametric estimation was accomplished via generalized linear models, with a binomial distribution and logistic link for the exposure, and a Gaussian distribution and identity link for the outcome. As described above, these parametric models are correctly specified when the simple confounders are used, but highly misspecified when the transformed confounders are used.
+
+Nonparametric estimation was accomplished via a stacking algorithm (Super Learner) [@vanderLaan2007]. To explore the importance of the selected algorithm, we implemented a wide variety of different stacking algorithms that included different sets of base algorithms. Full details on all variations of the stacking algorithms explored are available in the GitHub Repository provided below. Here, we present the results based on a stacked generalizations that included:
+\begin{itemize}
+	\item[version 1)] ($i$) random forests with 500 trees, random subspace selection value of two, and a minimum node size of 30 and 60; ($ii$) the extreme gradient boosting algorithm with 500 trees, a maximum tree depth of 4, shrinkage parameter of 0.1, and minimum node size of 30 and 60.
+	\item[version 2)] Both random forests and extreme gradient boosting included in version 1, as well as ($iii$) generalized additive models with univariate smoothing splines with effective degrees of freedom between 3 and 8.
+\end{itemize}
+
+We also explored estimating the average treatment effects of interest with the stacking algorithms in version 2 that included 2-way interactions between all four confounders in the adjustment set. For all stacking algorithms, cross validation was used to compute the learner weights with fold sizes of $K = 10, 5,$ and $5$ for the sample sizes 200, 1200, and 5000, respectively [@Naimi2018]. For each machine learning based doubly robust estimator, we also explored the impact of sample splitting [@Rinaldo2018;@Zivich2020] This procedure involves splitting the sample into $K$ equal size folds, fitting models for $f(\mathbf{C})$ and $g(X,\mathbf{C})$ in one fold, using these models to predict exposure and outcome values in all remaining folds, and then repeating the process with the folds switched. We note that sample splitting is distinct from cross-validation of the super learner algorithm. The final effect estimate is computed over the entire sample as usual. The sample splitting procedure used here is equivalent to the CV-TMLE approach such as is implemented in the tlverse R package [@tlverse]. However, different variations exist [@Rinaldo2018;@Zivich2020].
+
+Standard errors for g computation were obtained from the standard deviation of 100 bootstrap resamples using the normal interval approximation (i.e., Wald method). However, for computational reasons, we were only able to apply the bootstrap to the nonparametric g computation estimator in select scenarios. Standard errors for the inverse probability weighted approach were obtained using the robust variance estimator. Standard errors for both doubly robust approaches were obtained using the variance of the efficient influence function. All confidence intervals were computed via the normal interval (i.e., Wald) equation. For each estimator in each scenario, we computed the bias: $B(\hat{\psi}) = E(\hat{\psi}) - \psi$, and 95\% confidence interval coverage, defined as the proportion of 95\% confidence intervals that included the true value over all 200 Monte Carlo runs. Simulations were done in \texttt{R} version 4.0.3 (The R Foundation, Vienna, Austria). Code to reproduce our results and additional details are available on GitHub: \href{https://github.com/amishler/nonparametricDoublyRobust}{https://github.com/amishler/nonparametricDoublyRobust}.
+
+\section*{Simulation Results}
+
+Figure \@ref(fig:figure1) shows the estimated absolute bias across all sample sizes for all scenarios with the stacking algorithm that included random forests and extreme gradient boosting, and which did not use sample splitting. As expected, when using the correct parametric models, all methods are unbiased. In contrast, when the transformed confounders are used with parametric models (and thus parametric models are all mis-specified), all four estimators are subject to considerable bias which does not improve as the sample size increases (Figure \@ref(fig:figure1)).
+
+```{r figure1, out.width = "275px", fig.align='center', fig.cap="Absolute bias of inverse probability weighted, g-computation, and doubly robust estimators for sample sizes of N=200, N=1200, and N=5000. Bar color intensity, from black to light gray, represent IPW, g Computation, AIPW, and TMLE estimators, respectively. Plot panels: A) nonparametric regression with transformed covariates; B) nonparametric regression with untransformed covariates; C) parametric regression with transformed covariates; D) nonparametric regression with untransformed covariates (correctly specified parametric regression). Parametric regression included logistic regression for the exposure model, and linear regression for the outcome model. Nonparametric method consisted of a stacked generalization with random forests and extreme gradient boosting algorithms, and no sample splitting.",echo=F}
+knitr::include_graphics("../figures/AJE-00517-2020_Naimi_Figure1_v2.png")
+```
+
+When models are fit nonparametrically using the simple confounders, IP-weighting displays considerable bias. G computation is also biased, but less than IP-weighting. In the nonparametric simple and complex settings (with transformed confounders), the bias decreases when doubly robust estimators are used  (Figure \@ref(fig:figure1)). Generally, these results demonstrate what is expected from theory: the bias of singly robust estimators is larger than the bias of doubly robust estimators. Notably, in our simulation scenario under select sample sizes, the bias of the IP-weighted estimator under a nonparametric model with simple and transformed confounders is comparable to the bias of the misspecified parametric models (Figure \@ref(fig:figure1)).
+
+Table 1 shows the 95\% confidence interval coverage for each scenario. When correct parametric models were used, CI coverage was nominal, except for the robust variance estimator used for IP-weighting, which is known to be conservative [@Hernan2001] When parametric models were fit with the transformed covariates (Parametric Misspecified), coverage dropped to 46\% or lower.
+
+\noindent Table 1. Confidence interval coverage$^a$ for sample sizes of $N=200$, $N=1200$, and $N=5000$ obtained from parametric and nonparametric$^{b}$ models under simple and complex confounding scenarios without sample splitting.
+
+\begin{table}[ht]
+\label{T1}
+\centering
+\begin{tabular}{l|rrrr|rrrr}
+$N$  & IPW & g-Comp & AIPW & TMLE & IPW & g-Comp & AIPW & TMLE \\ 
+ &  \multicolumn{3}{l}{{ Parametric True}} & & \multicolumn{3}{l}{{ Parametric Mispecified}} \\
+  \hline
+      &&&&&&&&\\[-.5em]
+   200 & 0.96 & 0.95 & 0.95 & 0.94 & 0.46 & 0.23 & 0.28 & 0.24 \\ 
+  1200 & 0.98 & 0.93 & 0.94 & 0.94 & 0.01 & 0.00 & 0.00 & 0.00 \\ 
+  5000 & 0.97 & 0.92 & 0.92 & 0.92 & 0.00 & 0.00 & 0.00 & 0.00 \\ 
+
+      &&&&&&&&\\[-.5em]
+ & \multicolumn{3}{l}{{ Nonparametric Simple}} & & \multicolumn{3}{l}{{ Nonparametric Complex}} \\
+%$N$ &  IPW & g-Comp & AIPW & TMLE & IPW & g-Comp & AIPW & TMLE \\    
+\hline
+      &&&&&&&&\\[-.5em]
+200  & 0.01 & NA & 0.02 & 0.22 & 0.00 & NA & 0.00 & 0.07 \\ 
+1200 & 0.02 & NA & 0.00 & 0.24 & 0.01 & NA & 0.00 & 0.05 \\ 
+5000 & 0.00 & NA & 0.02 & 0.29 & 0.00 & NA & 0.00 & 0.03 \\
+      &&&&&&&&\\[-.5em]
+   \hline
+   \multicolumn{9}{p{12cm}}{{\footnotesize{Abbreviations: IPW, inverse-probability weighting; g-Comp, g Computation; AIPW, augmented inverse-probability weighting; TMLE, targeted minimum loss-based estimation.}}}\\
+   \multicolumn{9}{p{12cm}}{{\footnotesize{$a$ Confidence interval coverage, defined as the proportion of 95\% confidence intervals that included the true value.}}}\\
+   \multicolumn{9}{p{12cm}}{{\footnotesize{$b$ Nonparametric estimation was based on a stacked generalization with random forests and extreme gradient boosting algorithms.}}}
+\end{tabular}
+\end{table}
+
+The machine learning results presented in Table 1 represent version 1 of the stacked generalization when sample splitting was not used. When fit with machine learning algorithms, coverage for all estimators was well below the nominal threshold of 95\%. This was true for both singly and doubly robust approaches in both simple and transformed confounder settings (Table 1).  
+
+The poor performance of machine learning methods observed in Table 1 improved under the additional strategies explored. These results are presented in Figures \@ref(figure2) to \@ref(figure4), which includes confidence interval coverage from scenarios in which: sample splitting, generalized additive models, and confounder interactions were used with the stacking algorithms and estimators. Indeed, the highest observed coverage was 29\% for TMLE in the simple confounder setting. In contrast, the lowest coverage in the simple confounder setting was 44\% for TMLE with sample splitting. When sample splitting was used, AIPW and TMLE almost reached nominal coverage rates in the simple confounder setting. Coverage improved in the transformed confounder setting with sample splitting, but did not reach nominal rates. 
+
+```{r figure2, out.width = "275px", fig.align='center', fig.cap="Coverage of doubly robust estimators for sample sizes of $N=200$, $N=1200$, and $N=5000$ when models for each estimator are specified nonparametrically in the simple confounder and complex (transformed) confounder settings. Bar color black and light gray represent AIPW and TMLE estimators, respectively. Nonparametric method consisted of: a stacked generalization with random forests and extreme gradient boosting algorithms with sample splitting.",echo=F}
+knitr::include_graphics("../figures/AJE-00517-2020_Naimi_Figure2_v2.png")
+```
+
+When GAMs were combined with sample splitting, nominal coverage was attained in the simple confounder setting, but was still quite low for the transformed confounders. Coverage in the transformed confounder setting only attained nominal rates for AIPW and TMLE when sample splitting was combined with GAMs, and all confounder-confounder interactions were included in the models (Figure \@ref(figure4)).
+
+\section*{Discussion}
+
+Both machine learning and doubly robust estimation are becoming increasingly popular, however the relation between them remains poorly understood. Here, we have shown how machine learning methods are biased when used with singly robust estimators such as inverse probability weighting or g computation (also known as marginal standardization). Performance, however, is greatly improved when used with doubly robust approaches, particularly with sample splitting and flexible regression methods.
+
+Doubly robust estimators can enable use of machine learning algorithms to estimate causal effects, and thus offer some protection against model misspecification. A misspecified model form can occur if the analyst fails to correctly account for the manner in which exposure and confounders relate to the outcome. For a generalized linear model, this would occur if chosen link function is not compatible with how the data were actually generated [@Weisberg1994]. if the analyst fails to account for curvilinear relations between the covariates and the outcome, or fails to include important exposure-confounder or confounder-confounder interactions. Unfortunately, in an observational study the true nature of these relations is typically not known, which is one reason underlying the increasing popularity of machine learning methods. However, misspecification resulting an incomplete confounder adjustment set, or incorrectly adjusting for a mediator, cannot be fixed with doubly robust machine learning methods [@Keil2018].
+
+The problems that can be encountered when using machine learning algorithms to estimate causal effects are typically attributed to the curse of dimensionality. Generally, the curse of dimensionality describes a situation where, for a given estimator, as the number of variables in a model increases, the sample size needed to maintain the same level of accuracy (expressed in terms of, e.g., bias, MSE, or coverage) increases exponentially. As we have shown, such problems will affect nonparametric (i.e., machine learning based) more profoundly, unless double robust methods are used. Indeed, Under our chosen data generating mechanisms, implementing each estimator using correct parametric models resulted in unbiased estimation. However, when implemented nonparametrically using the correct set of confounders, both g computation and inverse probability weighting were biased, while both doubly robust approaches were less biased. These results align with other work on the use of machine learning methods with double robust estimators [@Zivich2020;@Chernozhukov2018;@Kennedy2016] and suggest that researchers should carefully weigh all considerations when using machine learning methods to estimate causal effects.
+
+More specifically, our results suggest that when machine learning is used to quantify average treatment effects, researchers should employ the following practices to maximize the performance of the estimation approach:
+
+\begin{itemize}
+	\item[1.] Use doubly robust estimation methods, such as augmented inverse probability weighted or targeted minimum loss-based estimation. 
+	\item[2.] Use sample splitting, also referred to as cross-fitting, double cross-fitting, which improves estimation of standard errors and confidence interval coverage.
+	\item[3.] Use a richly specified library of flexible regression, tree-based, gradient based, and other algorithms, that maximize the diversity of a given stacking algorithm. 
+	\item[4.] Include first and higher order interactions between selected adjustment variables in a given stacking algorithm. Additionally, one may include other transformations (e.g., log, non-product interactions, or polynomial terms), as well as consider the use of screening algorithms that remove potentially unnecessary variable transformations.
+\end{itemize}
+
+While our recommendations are general enough to be considered any time researchers seek to use machine learning methods when estimating causal effects, certain limitations of our simulation study should be taken into consideration. First, we relied on only one hundred Monte Carlo samples, which is small. However, our intent was not to provide an in depth evaluation of the performance of doubly and singly robust estimators with and without machine learning methods, which has been done extensively in more technical areas [@Chernozhukov2018; @Tan2010; @Rose2011]. Rather, we sought to demonstrate properties of machine learning methods that are well-known in some fields, but seem to not be well appreciated among applied epidemiologists. Second, we did not focus our simulations on evaluating the relative performance of AIPW versus TMLE. Though are results might suggest that one or the other estimator performs better in certain settings, we would recommend against making such interpretations without a more in-depth exploration. Third, we only explored average treatment effect estimation for a binary point treatment and continuous confounders, but doubly robust-type methods have been developed for a wide variety of settings, including continuous [@Munoz2012; @Kennedy2017b] and time-varying exposures [@Kennedy2019] instrumental variables [@Ogburn2015], mediation [@Tchetgen2012c], and missing data [@Long2012,@Sun2018]. However, we do expect our findings would apply more generally [@Kennedy2016]. Finally, our simulations were very limited in that they explored two relatively unrealistic data generating mechanisms: one simple (with untransformed confounders), and one complex (with confounders transformed via complex nonlinear functions). Nevertheless, even under our simple data generating mechanism, we were able to achieve low bias and nominal coverage only when sample splitting and flexible regression methods were used (for the simple confounder scenario), or when sample splitting, flexible regression, and confounder interactions were used (for the transformed confounder setting). We believe these findings should inform future analyses using machine learning methods with double robust estimators.
+
+# References
